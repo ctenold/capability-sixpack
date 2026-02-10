@@ -4,7 +4,7 @@ Generate a Minitab-style capability sixpack report with Python and Matplotlib.
 
 ## Example Output
 
-![Sixpack report preview](docs/assets/sixpack_report_preview.png)
+![Sixpack report preview](output/sixpack_report.png)
 
 ## Quick Start
 

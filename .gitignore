@@ -1,13 +1,13 @@
 __pycache__/
 *.py[cod]
-output/
 *.png
 *.jpg
 *.jpeg
 *.gif
 *.svg
 *.pdf
-!docs/assets/*.png
+output/*
+!output/sixpack_report.png
 *.log
 *.tmp
 *.temp
@@ -16,3 +16,4 @@ output/
 *.DS_Store
 Thumbs.db
 *.ttf
+docs/
