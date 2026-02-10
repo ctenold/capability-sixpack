@@ -490,7 +490,7 @@ def generate_sixpack(
         fig_title.set_fontweight("bold")
     else:
         fig.suptitle(title, fontsize=12, y=0.98, fontweight="bold")
-    fig.patch.set_facecolor("#efefef")
+    fig.patch.set_facecolor("#e0e0e0")
     grid = fig.add_gridspec(3, 2, hspace=0.6, wspace=0.35)
 
     _plot_i_chart(fig.add_subplot(grid[0, 0]), values_array, stats)
