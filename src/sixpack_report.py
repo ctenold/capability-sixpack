@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats as scipy_stats
 from statsmodels.stats.diagnostic import normal_ad
+from matplotlib import font_manager
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,49 @@ class CapabilityStats:
     cpm: float
     ad_stat: float
     ad_p_value: float
+
+
+FONT_FAMILY = "Plus Jakarta Sans"
+_FONT_PROP: Optional[font_manager.FontProperties] = None
+_FONT_BOLD_PROP: Optional[font_manager.FontProperties] = None
+
+
+def _configure_fonts() -> Optional[font_manager.FontProperties]:
+    global _FONT_PROP, _FONT_BOLD_PROP
+    if _FONT_PROP is not None:
+        return _FONT_PROP
+
+    font_dir = Path(__file__).resolve().parent / "assets" / "fonts" / "plus_jakarta_sans"
+    regular_path = font_dir / "PlusJakartaSans-Regular.ttf"
+    bold_path = font_dir / "PlusJakartaSans-Bold.ttf"
+
+    if not regular_path.exists():
+        return None
+
+    font_manager.fontManager.addfont(str(regular_path))
+    if bold_path.exists():
+        font_manager.fontManager.addfont(str(bold_path))
+
+    _FONT_PROP = font_manager.FontProperties(fname=str(regular_path))
+    bold_source = bold_path if bold_path.exists() else regular_path
+    _FONT_BOLD_PROP = font_manager.FontProperties(fname=str(bold_source), weight="bold")
+
+    plt.rcParams["font.family"] = _FONT_PROP.get_name()
+    plt.rcParams["font.sans-serif"] = [_FONT_PROP.get_name()]
+    plt.rcParams["font.weight"] = "regular"
+    plt.rcParams["axes.titleweight"] = "bold"
+    return _FONT_PROP
+
+
+def _title(ax: plt.Axes, text: str, pad: float) -> None:
+    if _FONT_BOLD_PROP is not None:
+        title = ax.set_title(text, fontsize=10, pad=pad, fontproperties=_FONT_BOLD_PROP)
+        title.set_fontweight("bold")
+    elif _FONT_PROP is not None:
+        title = ax.set_title(text, fontsize=10, pad=pad, fontproperties=_FONT_PROP)
+        title.set_fontweight("bold")
+    else:
+        ax.set_title(text, fontsize=10, pad=pad, fontweight="bold")
 
 
 def _moving_ranges(values: np.ndarray) -> np.ndarray:
@@ -95,32 +139,41 @@ def _plot_i_chart(ax: plt.Axes, values: np.ndarray, cap_stats: CapabilityStats) 
     ax.axhline(ucl, color="#d62728", linewidth=1)
     ax.axhline(lcl, color="#d62728", linewidth=1)
 
-    ax.set_title("I Chart", fontsize=10, pad=10, fontweight="bold")
+    _title(ax, "I Chart", pad=10)
     ax.set_ylabel("Individual Value", fontsize=9)
     ax.set_xlim(1, len(values))
     ax.grid(True, axis="y", linestyle=":", alpha=0.6)
     ax.set_facecolor("white")
 
+    x_min, x_max = ax.get_xlim()
+    label_x = x_max + (x_max - x_min) * 0.03
+
     ax.text(
-        1.02,
-        0.9,
+        label_x,
+        ucl,
         f"UCL={ucl:.3f}",
-        transform=ax.transAxes,
         fontsize=8,
+        va="center",
+        ha="left",
+        clip_on=False,
     )
     ax.text(
-        1.02,
-        0.5,
+        label_x,
+        cap_stats.mean,
         f"$\\bar{{X}}$={cap_stats.mean:.3f}",
-        transform=ax.transAxes,
         fontsize=8,
+        va="center",
+        ha="left",
+        clip_on=False,
     )
     ax.text(
-        1.02,
-        0.1,
+        label_x,
+        lcl,
         f"LCL={lcl:.3f}",
-        transform=ax.transAxes,
         fontsize=8,
+        va="center",
+        ha="left",
+        clip_on=False,
     )
 
 
@@ -137,32 +190,41 @@ def _plot_mr_chart(ax: plt.Axes, values: np.ndarray) -> None:
     ax.axhline(ucl, color="#d62728", linewidth=1)
     ax.axhline(lcl, color="#d62728", linewidth=1)
 
-    ax.set_title("Moving Range Chart", fontsize=10, pad=10, fontweight="bold")
+    _title(ax, "Moving Range Chart", pad=10)
     ax.set_ylabel("Moving Range", fontsize=9)
     ax.set_xlim(1, len(values))
     ax.grid(True, axis="y", linestyle=":", alpha=0.6)
     ax.set_facecolor("white")
 
+    x_min, x_max = ax.get_xlim()
+    label_x = x_max + (x_max - x_min) * 0.03
+
     ax.text(
-        1.02,
-        0.85,
+        label_x,
+        ucl,
         f"UCL={ucl:.3f}",
-        transform=ax.transAxes,
         fontsize=8,
+        va="center",
+        ha="left",
+        clip_on=False,
     )
     ax.text(
-        1.02,
-        0.5,
+        label_x,
+        mr_bar,
         f"$\\bar{{M}}$R={mr_bar:.3f}",
-        transform=ax.transAxes,
         fontsize=8,
+        va="center",
+        ha="left",
+        clip_on=False,
     )
     ax.text(
-        1.02,
-        0.15,
+        label_x,
+        lcl,
         "LCL=0",
-        transform=ax.transAxes,
         fontsize=8,
+        va="center",
+        ha="left",
+        clip_on=False,
     )
 
 
@@ -171,7 +233,7 @@ def _plot_last_observations(ax: plt.Axes, values: np.ndarray, cap_stats: Capabil
     x = np.arange(len(values) - len(last_values) + 1, len(values) + 1)
     ax.scatter(x, last_values, color="#1f77b4", s=16)
     ax.axhline(cap_stats.mean, color="#2ca02c", linewidth=1, linestyle="--")
-    ax.set_title("Last 25 Observations", fontsize=10, pad=10, fontweight="bold")
+    _title(ax, "Last 25 Observations", pad=10)
     ax.set_xlabel("Observation", fontsize=9)
     ax.set_ylabel("Values", fontsize=9)
     ax.grid(True, axis="y", linestyle=":", alpha=0.6)
@@ -214,8 +276,7 @@ def _plot_histogram(
     if specs.target is not None:
         ax.axvline(specs.target, color="#2ca02c", linestyle=":", linewidth=1)
 
-    ax.set_title("Capability Histogram", fontsize=10, pad=12, fontweight="bold")
-    ax.set_xlabel("Values", fontsize=9)
+    _title(ax, "Capability Histogram", pad=12)
     ax.set_ylabel("")
     ax.set_yticks([])
     ax.grid(True, axis="y", linestyle=":", alpha=0.6)
@@ -294,8 +355,8 @@ def _plot_probability(ax: plt.Axes, values: np.ndarray, cap_stats: CapabilitySta
     fit = slope * np.array(osm) + intercept
     ax.plot(fit, osm, color="#d62728", linewidth=1)
 
-    ax.set_title("Normal Prob Plot", fontsize=10, pad=10, fontweight="bold")
-    ax.set_xlabel("Observed", fontsize=9)
+    _title(ax, "Normal Prob Plot", pad=10)
+    ax.set_xlabel("")
     ax.set_ylabel("")
     ax.set_yticks([])
     ax.grid(True, linestyle=":", alpha=0.6)
@@ -312,7 +373,7 @@ def _plot_probability(ax: plt.Axes, values: np.ndarray, cap_stats: CapabilitySta
 
 
 def _plot_capability(ax: plt.Axes, cap_stats: CapabilityStats, specs: CapabilitySpecs) -> None:
-    ax.set_title("Capability Plot", fontsize=10, pad=10, fontweight="bold")
+    _title(ax, "Capability Plot", pad=10)
     ax.set_xlim(specs.lsl - 1, specs.usl + 1)
     ax.set_ylim(0, 3)
     ax.set_yticks([0.5, 1.5, 2.5])
@@ -382,6 +443,7 @@ def generate_sixpack(
     title: str,
     output_path: Path,
 ) -> CapabilityStats:
+    _configure_fonts()
     values_array = np.asarray(list(values), dtype=float)
     if values_array.size < 5:
         raise ValueError("Need at least 5 observations for sixpack.")
@@ -389,7 +451,14 @@ def generate_sixpack(
     stats = _capability_stats(values_array, specs)
 
     fig = plt.figure(figsize=(10, 7), dpi=150)
-    fig.suptitle(title, fontsize=12, y=0.98)
+    if _FONT_BOLD_PROP is not None:
+        fig_title = fig.suptitle(title, fontsize=12, y=0.98, fontproperties=_FONT_BOLD_PROP)
+        fig_title.set_fontweight("bold")
+    elif _FONT_PROP is not None:
+        fig_title = fig.suptitle(title, fontsize=12, y=0.98, fontproperties=_FONT_PROP)
+        fig_title.set_fontweight("bold")
+    else:
+        fig.suptitle(title, fontsize=12, y=0.98, fontweight="bold")
     fig.patch.set_facecolor("#efefef")
     grid = fig.add_gridspec(3, 2, hspace=0.6, wspace=0.35)
 

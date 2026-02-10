@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+output/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.pdf
+!docs/assets/*.png
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.DS_Store
+Thumbs.db
