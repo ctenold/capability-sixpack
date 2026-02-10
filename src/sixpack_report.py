@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,8 @@ from typing import Iterable, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
+import requests
+import urllib3
 from scipy import stats as scipy_stats
 from statsmodels.stats.diagnostic import normal_ad
 from matplotlib import font_manager
@@ -36,16 +39,41 @@ class CapabilityStats:
 
 
 FONT_FAMILY = "Plus Jakarta Sans"
+FONT_URLS = (
+    "https://raw.githubusercontent.com/tokotype/PlusJakartaSans/master/fonts/ttf/PlusJakartaSans-Regular.ttf",
+    "https://raw.githubusercontent.com/tokotype/PlusJakartaSans/master/fonts/ttf/PlusJakartaSans-Bold.ttf",
+)
+DEFAULT_FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts" / "plus_jakarta_sans"
 _FONT_PROP: Optional[font_manager.FontProperties] = None
 _FONT_BOLD_PROP: Optional[font_manager.FontProperties] = None
 
 
-def _configure_fonts() -> Optional[font_manager.FontProperties]:
+def _download_font_file(font_url: str, destination: Path) -> bool:
+    try:
+        response = requests.get(font_url, timeout=20, verify=False)
+        response.raise_for_status()
+    except requests.RequestException:
+        return False
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(response.content)
+    return True
+
+def download_fonts(font_dir: Path = DEFAULT_FONT_DIR) -> bool:
+    """Download Plus Jakarta Sans fonts into the provided directory."""
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    regular_path = font_dir / "PlusJakartaSans-Regular.ttf"
+    bold_path = font_dir / "PlusJakartaSans-Bold.ttf"
+
+    regular_ok = _download_font_file(FONT_URLS[0], regular_path)
+    bold_ok = _download_font_file(FONT_URLS[1], bold_path)
+    return regular_ok and bold_ok
+
+def _configure_fonts(font_dir: Path = DEFAULT_FONT_DIR) -> Optional[font_manager.FontProperties]:
     global _FONT_PROP, _FONT_BOLD_PROP
     if _FONT_PROP is not None:
         return _FONT_PROP
 
-    font_dir = Path(__file__).resolve().parent / "assets" / "fonts" / "plus_jakarta_sans"
     regular_path = font_dir / "PlusJakartaSans-Regular.ttf"
     bold_path = font_dir / "PlusJakartaSans-Bold.ttf"
 
@@ -442,8 +470,11 @@ def generate_sixpack(
     specs: CapabilitySpecs,
     title: str,
     output_path: Path,
+    *,
+    use_downloaded_fonts: bool = False,
 ) -> CapabilityStats:
-    _configure_fonts()
+    if use_downloaded_fonts:
+        _configure_fonts()
     values_array = np.asarray(list(values), dtype=float)
     if values_array.size < 5:
         raise ValueError("Need at least 5 observations for sixpack.")
@@ -484,12 +515,31 @@ def _synthetic_data(seed: int = 42) -> np.ndarray:
     return data + drift
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate a capability sixpack report.")
+    parser.add_argument(
+        "--download-fonts",
+        action="store_true",
+        help="Download Plus Jakarta Sans fonts and use them for the report.",
+    )
+    return parser.parse_args()
+
 def main() -> None:
+    args = _parse_args()
+    use_downloaded_fonts = False
+    if args.download_fonts:
+        use_downloaded_fonts = download_fonts()
     values = _synthetic_data()
     specs = CapabilitySpecs(lsl=103.0, usl=110.0, target=104.0)
     output = Path("output/sixpack_report.png")
 
-    stats = generate_sixpack(values, specs, "Process Capability Sixpack Report for data", output)
+    stats = generate_sixpack(
+        values,
+        specs,
+        "Process Capability Sixpack Report for data",
+        output,
+        use_downloaded_fonts=use_downloaded_fonts,
+    )
 
     print(f"Sixpack saved to {output.resolve()}")
     print(

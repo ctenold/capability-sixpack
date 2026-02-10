@@ -9,7 +9,7 @@ Generate a Minitab-style capability sixpack report with Python and Matplotlib.
 ## Quick Start
 
 ```bash
-python src/sixpack_report.py
+python src/sixpack_report.py --download-fonts
 ```
 
 The script writes `output/sixpack_report.png` and prints a short capability summary.
@@ -32,6 +32,7 @@ stats = generate_sixpack(
     specs,
     "Process Capability Sixpack Report",
     Path("output/sixpack_report.png"),
+    use_downloaded_fonts=True,
 )
 
 print(stats)
@@ -40,4 +41,5 @@ print(stats)
 ## Project Notes
 
 - The report layout mirrors Minitab's sixpack with I/MR charts, histogram, probability plot, last 25 observations, and a capability plot.
-- Fonts load from the bundled Plus Jakarta Sans files when available.
+- Use `--download-fonts` to fetch Plus Jakarta Sans into `src/assets/fonts/plus_jakarta_sans`.
+- Without downloaded fonts, the charts use your default Matplotlib fonts.
