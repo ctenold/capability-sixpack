@@ -615,6 +615,7 @@ def _plot_capability(ax: plt.Axes, cap_stats: CapabilityStats, specs: Capability
     _title(ax, "Capability Plot", pad=10)
     ax.set_xlim(specs.lsl - 1, specs.usl + 1)
     ax.set_ylim(0, 3)
+    _shrink_x_axis(ax, shrink=0.5)
     ax.set_yticks([0.5, 1.5, 2.5])
     ax.set_yticklabels(["Specs", "Within", "Overall"], fontsize=8)
     ax.grid(True, axis="x", linestyle=":", alpha=0.6)
@@ -651,29 +652,54 @@ def _plot_capability(ax: plt.Axes, cap_stats: CapabilityStats, specs: Capability
 
     ax.set_xlabel("Values", fontsize=9)
 
-    stats_text = "\n".join(
-        [
-            "Within",
-            f"StDev  {_format_sigma(cap_stats.within_sigma)}",
-            f"Cp  {_format_capability(cap_stats.cp)}",
-            f"Cpk  {_format_capability(cap_stats.cpk)}",
-            "",
-            "Overall",
-            f"StDev  {_format_sigma(cap_stats.overall_sigma)}",
-            f"Pp  {_format_capability(cap_stats.pp)}",
-            f"Ppk  {_format_capability(cap_stats.ppk)}",
-            f"Cpm  {_format_capability(cap_stats.cpm)}",
-        ]
+    # Left table: Within stats
+    within_stats = [
+        ["StDev", _format_sigma(cap_stats.within_sigma)],
+        ["Cp", _format_capability(cap_stats.cp)],
+        ["Cpk", _format_capability(cap_stats.cpk)],
+    ]
+    left_table = ax.table(
+        cellText=within_stats,
+        colLabels=["Within", ""],
+        loc="center left",
+        cellLoc="center",
+        colLoc="center",
+        bbox=[-0.75, 0.25, 0.4, 0.55],
     )
-    ax.text(
-        1.02,
-        0.95,
-        stats_text,
-        transform=ax.transAxes,
-        fontsize=8,
-        va="top",
-        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", edgecolor="#cccccc"),
+    left_table.auto_set_font_size(False)
+    left_table.set_fontsize(7)
+    left_table.scale(1, 1.3)
+    for (row, col), cell in left_table.get_celld().items():
+        cell.set_facecolor("white")
+        cell.set_edgecolor("white")
+        cell.set_linewidth(0)
+        if row == 0:
+            cell.set_text_props(weight="bold", fontsize=7)
+
+    # Right table: Overall stats
+    overall_stats = [
+        ["StDev", _format_sigma(cap_stats.overall_sigma)],
+        ["Pp", _format_capability(cap_stats.pp)],
+        ["Ppk", _format_capability(cap_stats.ppk)],
+        ["Cpm", _format_capability(cap_stats.cpm)],
+    ]
+    right_table = ax.table(
+        cellText=overall_stats,
+        colLabels=["Overall", ""],
+        loc="center right",
+        cellLoc="center",
+        colLoc="center",
+        bbox=[1.10, 0.15, 0.4, 0.65],
     )
+    right_table.auto_set_font_size(False)
+    right_table.set_fontsize(7)
+    right_table.scale(1, 1.3)
+    for (row, col), cell in right_table.get_celld().items():
+        cell.set_facecolor("white")
+        cell.set_edgecolor("white")
+        cell.set_linewidth(0)
+        if row == 0:
+            cell.set_text_props(weight="bold", fontsize=7)
 
 def _prepare_box(ax: plt.Axes) -> None:
     ax.set_facecolor("none")
