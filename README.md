@@ -1,17 +1,21 @@
 # Capability Sixpack Report
 
-Generate Minitab-style capability sixpack and Gage R&R reports with Python and Matplotlib.
+Generate Minitab-style capability sixpack, capability analysis, and Gage R&R reports with Python and Matplotlib.
 
 ## Features
 
-- **Capability Sixpack** – I/MR control charts, histogram, probability plot, last 25 observations, and capability indices (Cp, Cpk, Pp, Ppk, Cpm)
-- **Gage R&R Study (ANOVA)** – Full ANOVA analysis with variance components, % study variation, % tolerance, and distinct categories
-- **MSA Assistant** – Automated interpretation of Gage R&R results with pass/fail assessment against AIAG MSA guidelines
+- **Capability Sixpack** - I/MR control charts, histogram, probability plot, last 25 observations, and capability indices (Cp, Cpk, Pp, Ppk, Cpm)
+- **Capability Analysis (Normal)** - Capability histogram with process data, overall/within indices, and PPM performance summary
+- **Gage R&R Study (ANOVA)** - Full ANOVA analysis with variance components, % study variation, % tolerance, and distinct categories
+- **MSA Assistant** - Automated interpretation of Gage R&R results with pass/fail assessment against AIAG MSA guidelines
 
 ## Example Output
 
 ### Capability Sixpack
 ![Sixpack report preview](output/sixpack_report.png)
+
+### Capability Analysis (Normal)
+![Capability analysis preview](output/capability_analysis_report.png)
 
 ### Gage R&R Report
 ![Gage R&R report preview](output/gage_rr_report.png)
@@ -24,6 +28,11 @@ Generate Minitab-style capability sixpack and Gage R&R reports with Python and M
 ### Capability Sixpack
 ```bash
 python src/sixpack_report.py --download-fonts
+```
+
+### Capability Analysis (Normal)
+```bash
+python src/sixpack_report.py --capability-analysis --download-fonts
 ```
 
 ### Gage R&R Study
@@ -53,6 +62,28 @@ stats = generate_sixpack(
 )
 
 print(stats)
+```
+
+### Capability Analysis (Normal)
+
+```python
+from pathlib import Path
+from src.sixpack_report import CapabilitySpecs, generate_capability_analysis
+
+values = [
+    104.0, 104.4, 103.8, 105.1, 104.9,
+    105.2, 104.7, 104.1, 104.6, 105.0,
+]
+specs = CapabilitySpecs(lsl=103.0, usl=110.0, target=104.0)
+
+result = generate_capability_analysis(
+    values,
+    specs,
+    "Process Capability Report",
+    Path("output/capability_analysis_report.png"),
+)
+
+print(result.stats)
 ```
 
 ### Gage R&R Study

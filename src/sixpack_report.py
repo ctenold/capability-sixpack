@@ -42,6 +42,25 @@ class CapabilityStats:
     ad_p_value: float
 
 @dataclass(frozen=True)
+class CapabilityIndices:
+    cpu: float
+    cpl: float
+    ppu: float
+    ppl: float
+
+@dataclass(frozen=True)
+class CapabilityPerformance:
+    observed: tuple[float, float, float]
+    expected_overall: tuple[float, float, float]
+    expected_within: tuple[float, float, float]
+
+@dataclass(frozen=True)
+class CapabilityAnalysisResult:
+    stats: CapabilityStats
+    indices: CapabilityIndices
+    performance: CapabilityPerformance
+
+@dataclass(frozen=True)
 class GageRrRecord:
     part: str
     operator: str
@@ -206,6 +225,9 @@ def _capability_stats(values: np.ndarray, specs: CapabilitySpecs) -> CapabilityS
     mr = _moving_ranges(values)
     within_sigma = float(_within_sigma(mr))
 
+    if overall_sigma <= 0 or within_sigma <= 0:
+        raise ValueError("Data must include variation to compute capability statistics.")
+
     lsl = specs.lsl
     usl = specs.usl
     target = specs.target if specs.target is not None else (lsl + usl) / 2
@@ -238,6 +260,65 @@ def _format_sigma(value: float) -> str:
 
 def _format_capability(value: float) -> str:
     return f"{value:.2f}"
+
+def _format_ppm(value: float) -> str:
+    return f"{value:.2f}"
+
+def _validate_capability_inputs(
+    values: np.ndarray,
+    specs: CapabilitySpecs,
+    *,
+    min_count: int,
+    context: str,
+) -> None:
+    if values.size < min_count:
+        raise ValueError(f"Need at least {min_count} observations for {context}.")
+    if specs.usl <= specs.lsl:
+        raise ValueError("USL must be greater than LSL.")
+    if np.isclose(np.std(values, ddof=1), 0.0):
+        raise ValueError("Data must include variation to compute capability statistics.")
+
+def _capability_indices(
+    cap_stats: CapabilityStats,
+    specs: CapabilitySpecs,
+) -> CapabilityIndices:
+    mean = cap_stats.mean
+    within = cap_stats.within_sigma
+    overall = cap_stats.overall_sigma
+
+    cpu = (specs.usl - mean) / (3 * within)
+    cpl = (mean - specs.lsl) / (3 * within)
+    ppu = (specs.usl - mean) / (3 * overall)
+    ppl = (mean - specs.lsl) / (3 * overall)
+
+    return CapabilityIndices(cpu=cpu, cpl=cpl, ppu=ppu, ppl=ppl)
+
+def _performance_ppm(values: np.ndarray, cap_stats: CapabilityStats, specs: CapabilitySpecs) -> CapabilityPerformance:
+    total = float(values.size)
+    observed_low = float(np.sum(values < specs.lsl)) / total * 1_000_000
+    observed_high = float(np.sum(values > specs.usl)) / total * 1_000_000
+
+    within_dist = scipy_stats.norm(loc=cap_stats.mean, scale=cap_stats.within_sigma)
+    overall_dist = scipy_stats.norm(loc=cap_stats.mean, scale=cap_stats.overall_sigma)
+
+    expected_within_low = within_dist.cdf(specs.lsl) * 1_000_000
+    expected_within_high = (1 - within_dist.cdf(specs.usl)) * 1_000_000
+    expected_overall_low = overall_dist.cdf(specs.lsl) * 1_000_000
+    expected_overall_high = (1 - overall_dist.cdf(specs.usl)) * 1_000_000
+
+    return CapabilityPerformance(
+        observed=(observed_low, observed_high, observed_low + observed_high),
+        expected_overall=(
+            expected_overall_low,
+            expected_overall_high,
+            expected_overall_low + expected_overall_high,
+        ),
+        expected_within=(
+            expected_within_low,
+            expected_within_high,
+            expected_within_low + expected_within_high,
+        ),
+    )
 
 
 def _plot_i_chart(ax: plt.Axes, values: np.ndarray, cap_stats: CapabilityStats) -> None:
@@ -351,11 +432,17 @@ def _plot_last_observations(ax: plt.Axes, values: np.ndarray, cap_stats: Capabil
     ax.set_facecolor("white")
 
 
-def _plot_histogram(
+def _plot_capability_histogram(
     ax: plt.Axes,
     values: np.ndarray,
     cap_stats: CapabilityStats,
     specs: CapabilitySpecs,
+    *,
+    title: Optional[str],
+    show_legend: bool,
+    show_spec_box: bool,
+    legend_loc: str = "upper left",
+    legend_bbox: Optional[tuple[float, float]] = None,
 ) -> None:
     _counts, _bins, _ = ax.hist(
         values,
@@ -369,17 +456,19 @@ def _plot_histogram(
     x = np.linspace(min(values) - 1, max(values) + 1, 200)
     ax.plot(
         x,
-        scipy_stats.norm.pdf(x, cap_stats.mean, cap_stats.within_sigma),
+        scipy_stats.norm.pdf(x, cap_stats.mean, cap_stats.overall_sigma),
         color="#d62728",
         linewidth=1.2,
-        label="Within",
+        label="Overall",
     )
+
     ax.plot(
         x,
-        scipy_stats.norm.pdf(x, cap_stats.mean, cap_stats.overall_sigma),
+        scipy_stats.norm.pdf(x, cap_stats.mean, cap_stats.within_sigma),
         color="#1f77b4",
         linewidth=1.2,
-        label="Overall",
+        label="Within",
+        linestyle="--"
     )
 
     ax.axvline(specs.lsl, color="#d62728", linestyle="--", linewidth=1)
@@ -387,7 +476,8 @@ def _plot_histogram(
     if specs.target is not None:
         ax.axvline(specs.target, color="#2ca02c", linestyle=":", linewidth=1)
 
-    _title(ax, "Capability Histogram", pad=12)
+    if title:
+        _title(ax, title, pad=12)
     ax.set_ylabel("")
     ax.set_yticks([])
     ax.grid(True, axis="y", linestyle=":", alpha=0.6)
@@ -427,36 +517,56 @@ def _plot_histogram(
         clip_on=False,
     )
 
-    spec_text = "\n".join(
-        [
-            "Specifications",
-            f"LSL  {specs.lsl:.0f}",
-            f"Target  {specs.target:.0f}" if specs.target is not None else "",
-            f"USL  {specs.usl:.0f}",
-        ]
-    ).strip()
-    info_x = 1.05
-    legend = ax.legend(
-        fontsize=8,
-        loc="upper left",
-        bbox_to_anchor=(info_x, 1.08),
-        borderaxespad=0.0,
-        frameon=True,
-    )
-    legend.get_frame().set_facecolor("white")
-    legend.get_frame().set_edgecolor("#cccccc")
-    legend.get_frame().set_linewidth(1)
+    if show_legend:
+        if legend_bbox is None:
+            legend_bbox = (1.05, 1.08)
+        legend = ax.legend(
+            fontsize=8,
+            loc=legend_loc,
+            bbox_to_anchor=legend_bbox,
+            borderaxespad=0.0,
+            frameon=True,
+        )
+        legend.get_frame().set_facecolor("white")
+        legend.get_frame().set_edgecolor("#cccccc")
+        legend.get_frame().set_linewidth(1)
 
-    ax.text(
-        info_x,
-        0.7,
-        spec_text,
-        transform=ax.transAxes,
-        fontsize=8,
-        va="top",
-        ha="left",
-        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", edgecolor="#cccccc"),
-        clip_on=False,
+    if show_spec_box:
+        spec_text = "\n".join(
+            [
+                "Specifications",
+                f"LSL  {specs.lsl:.0f}",
+                f"Target  {specs.target:.0f}" if specs.target is not None else "",
+                f"USL  {specs.usl:.0f}",
+            ]
+        ).strip()
+        info_x = 1.05
+        ax.text(
+            info_x,
+            0.7,
+            spec_text,
+            transform=ax.transAxes,
+            fontsize=8,
+            va="top",
+            ha="left",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", edgecolor="#cccccc"),
+            clip_on=False,
+        )
+
+def _plot_histogram(
+    ax: plt.Axes,
+    values: np.ndarray,
+    cap_stats: CapabilityStats,
+    specs: CapabilitySpecs,
+) -> None:
+    _plot_capability_histogram(
+        ax,
+        values,
+        cap_stats,
+        specs,
+        title="Capability Histogram",
+        show_legend=True,
+        show_spec_box=True,
     )
 
 
@@ -465,6 +575,24 @@ def _plot_probability(ax: plt.Axes, values: np.ndarray, cap_stats: CapabilitySta
     ax.scatter(osr, osm, color="#1f77b4", s=12)
     fit = slope * np.array(osm) + intercept
     ax.plot(fit, osm, color="#d62728", linewidth=1)
+
+    # 95% confidence interval for the fitted line
+    n = len(values)
+    sorted_vals = np.sort(values)
+    # Plotting positions (median rank approximation)
+    p = (np.arange(1, n + 1) - 0.5) / n
+    # Z-scores for the plotting positions
+    z = scipy_stats.norm.ppf(p)
+    # Standard normal PDF at z
+    phi_z = scipy_stats.norm.pdf(z)
+    # Standard error for order statistics
+    se = cap_stats.overall_sigma * np.sqrt(p * (1 - p) / n) / phi_z
+    # 95% CI using z=1.96
+    z_alpha = 1.96
+    ci_lower = slope * osm + intercept - z_alpha * se
+    ci_upper = slope * osm + intercept + z_alpha * se
+    ax.plot(ci_lower, osm, color="#d62728", linewidth=0.8, linestyle="--", alpha=0.7)
+    ax.plot(ci_upper, osm, color="#d62728", linewidth=0.8, linestyle="--", alpha=0.7)
 
     _title(ax, "Normal Prob Plot", pad=10)
     ax.set_xlabel("")
@@ -546,6 +674,283 @@ def _plot_capability(ax: plt.Axes, cap_stats: CapabilityStats, specs: Capability
         va="top",
         bbox=dict(boxstyle="round,pad=0.3", facecolor="white", edgecolor="#cccccc"),
     )
+
+def _prepare_box(ax: plt.Axes) -> None:
+    ax.set_facecolor("none")
+    ax.axis("off")
+
+def _draw_box(
+    ax: plt.Axes,
+    *,
+    left: float,
+    bottom: float,
+    width: float,
+    height: float,
+) -> None:
+    ax.add_patch(
+        Rectangle(
+            (left, bottom),
+            width,
+            height,
+            transform=ax.transAxes,
+            fill=True,
+            facecolor="white",
+            edgecolor="#666666",
+            linewidth=1,
+        )
+    )
+
+def _draw_two_column_rows(
+    ax: plt.Axes,
+    rows: list[tuple[str, str]],
+    *,
+    start_y: float,
+    line_height: float,
+    label_x: float = 0.06,
+    value_x: float = 0.58,
+    fontsize: float = 8,
+) -> float:
+    y = start_y
+    for label, value in rows:
+        ax.text(label_x, y, label, fontsize=fontsize, ha="left", va="top", transform=ax.transAxes)
+        ax.text(value_x, y, value, fontsize=fontsize, ha="left", va="top", transform=ax.transAxes)
+        y -= line_height
+    return y
+
+def _draw_section_title(
+    ax: plt.Axes,
+    title: str,
+    *,
+    y: float,
+    fontsize: float = 8.5,
+    label_x: float = 0.06,
+) -> float:
+    ax.text(label_x, y, title, fontsize=fontsize, fontweight="bold", ha="left", va="top", transform=ax.transAxes)
+    return y
+
+def _draw_boxed_section(
+    ax: plt.Axes,
+    title: str,
+    rows: list[tuple[str, str]],
+    *,
+    top_y: float,
+    line_height: float,
+    left: float = 0.05,
+    right: float = 0.95,
+    padding: float = 0.03,
+    label_x: float = 0.08,
+    value_x: float = 0.6,
+) -> float:
+    lines_count = 1 + len(rows)
+    height = lines_count * line_height + padding * 2
+    bottom = top_y - height
+    _draw_box(ax, left=left, bottom=bottom, width=right - left, height=height)
+    title_y = top_y - padding
+    _draw_section_title(ax, title, y=title_y, label_x=label_x)
+    _draw_two_column_rows(
+        ax,
+        rows,
+        start_y=title_y - line_height,
+        line_height=line_height,
+        label_x=label_x,
+        value_x=value_x,
+    )
+    return bottom
+
+def _draw_stacked_sections(
+    ax: plt.Axes,
+    sections: list[tuple[str, list[tuple[str, str]]]],
+    *,
+    top_y: float,
+    line_height: float,
+    left: float = 0.05,
+    right: float = 0.95,
+    padding: float = 0.025,
+    label_x: float = 0.08,
+    value_x: float = 0.58,
+    divider_gap: float = 0.03,
+) -> None:
+    heights = [((1 + len(rows)) * line_height + padding * 2) for _title, rows in sections]
+    total_height = sum(heights) + divider_gap * (len(sections) - 1)
+    bottom = top_y - total_height
+    _draw_box(ax, left=left, bottom=bottom, width=right - left, height=total_height)
+
+    current_top = top_y
+    for idx, (title, rows) in enumerate(sections):
+        section_height = heights[idx]
+        title_y = current_top - (padding if idx == 0 else 0)
+        _draw_section_title(ax, title, y=title_y, label_x=label_x)
+        _draw_two_column_rows(
+            ax,
+            rows,
+            start_y=title_y - 1.5*line_height,
+            line_height=line_height,
+            label_x=label_x,
+            value_x=value_x,
+        )
+        current_top -= section_height
+        if idx < len(sections) - 1:
+            divider_y = current_top - divider_gap / 2
+            ax.plot(
+                [left, right],
+                [divider_y, divider_y],
+                transform=ax.transAxes,
+                color="#666666",
+                linewidth=1,
+            )
+            current_top -= divider_gap
+
+def _process_data_rows(values: np.ndarray, cap_stats: CapabilityStats, specs: CapabilitySpecs) -> list[tuple[str, str]]:
+    target = specs.target if specs.target is not None else (specs.lsl + specs.usl) / 2
+    return [
+        ("LSL", f"{specs.lsl:.3f}"),
+        ("Target", f"{target:.3f}"),
+        ("USL", f"{specs.usl:.3f}"),
+        ("Sample N", f"{values.size:d}"),
+        ("Mean", f"{cap_stats.mean:.4f}"),
+        ("StDev(Within)", f"{cap_stats.within_sigma:.6f}"),
+        ("StDev(Overall)", f"{cap_stats.overall_sigma:.6f}"),
+    ]
+
+def _overall_capability_rows(
+    cap_stats: CapabilityStats,
+    indices: CapabilityIndices,
+    *,
+    include_cpm: bool,
+) -> list[tuple[str, str]]:
+    rows = [
+        ("Pp", _format_capability(cap_stats.pp)),
+        ("PPL", _format_capability(indices.ppl)),
+        ("PPU", _format_capability(indices.ppu)),
+        ("Ppk", _format_capability(cap_stats.ppk)),
+    ]
+    if include_cpm:
+        rows.append(("Cpm", _format_capability(cap_stats.cpm)))
+    return rows
+
+def _within_capability_rows(cap_stats: CapabilityStats, indices: CapabilityIndices) -> list[tuple[str, str]]:
+    return [
+        ("Cp", _format_capability(cap_stats.cp)),
+        ("CPL", _format_capability(indices.cpl)),
+        ("CPU", _format_capability(indices.cpu)),
+        ("Cpk", _format_capability(cap_stats.cpk)),
+    ]
+
+def _draw_performance_table(ax: plt.Axes, performance: CapabilityPerformance) -> None:
+    labels = ["PPM < LSL", "PPM > USL", "PPM Total"]
+    columns = [
+        ("Observed", performance.observed),
+        ("Expected Overall", performance.expected_overall),
+        ("Expected Within", performance.expected_within),
+    ]
+    left = 0.15
+    right = 0.85
+    label_x = 0.17
+    column_x = [0.35, 0.52, 0.69]
+    line_height = 0.145
+    padding = 0.025
+    lines_count = 1 + len(labels)
+    top_y = 0.9
+    height = lines_count * line_height + padding * 4
+    bottom = top_y - height
+    _draw_box(ax, left=left, bottom=bottom, width=right - left, height=height)
+
+    header_y = top_y - padding
+    ax.text(label_x, header_y, "Performance", fontsize=8.5, fontweight="bold", ha="left", va="top", transform=ax.transAxes)
+    for idx, (header, _values) in enumerate(columns):
+        ax.text(column_x[idx], header_y, header, fontsize=8, ha="left", va="top", transform=ax.transAxes)
+
+    y = header_y - 1.5*line_height
+    for row_idx, label in enumerate(labels):
+        ax.text(label_x, y, label, fontsize=8, ha="left", va="top", transform=ax.transAxes)
+        for col_idx, (_header, values) in enumerate(columns):
+            ax.text(column_x[col_idx], y, _format_ppm(values[row_idx]), fontsize=8, ha="left", va="top", transform=ax.transAxes)
+        y -= line_height
+
+def _plot_capability_analysis_report(
+    values: np.ndarray,
+    cap_stats: CapabilityStats,
+    indices: CapabilityIndices,
+    performance: CapabilityPerformance,
+    specs: CapabilitySpecs,
+    title: str,
+    output_path: Path,
+) -> None:
+    fig = plt.figure(figsize=(7, 3.8), dpi=150)
+    fig.patch.set_facecolor("#e0e0e0")
+    if _FONT_BOLD_PROP is not None:
+        fig_title = fig.suptitle(title, fontsize=12, y=0.98, fontproperties=_FONT_BOLD_PROP)
+        fig_title.set_fontweight("bold")
+    elif _FONT_PROP is not None:
+        fig_title = fig.suptitle(title, fontsize=12, y=0.98, fontproperties=_FONT_PROP)
+        fig_title.set_fontweight("bold")
+    else:
+        fig.suptitle(title, fontsize=12, y=0.98, fontweight="bold")
+
+    grid = fig.add_gridspec(
+        3,
+        3,
+        width_ratios=[1.3, 2.0, 1.3],
+        height_ratios=[2.2, 0.01, 0.8],
+        hspace=0.1,
+        wspace=0.08,
+    )
+
+    hist_ax = fig.add_subplot(grid[0, 1])
+    _plot_capability_histogram(
+        hist_ax,
+        values,
+        cap_stats,
+        specs,
+        title=None,
+        show_legend=True,
+        show_spec_box=False,
+        legend_loc="upper left",
+        legend_bbox=(1.06, 1.0),
+    )
+    hist_ax.set_ylabel("")
+
+    left_ax = fig.add_subplot(grid[0, 0])
+    _prepare_box(left_ax)
+    _draw_boxed_section(
+        left_ax,
+        "Process Data",
+        _process_data_rows(values, cap_stats, specs),
+        top_y=0.93,
+        line_height=0.075,
+        label_x=0.08,
+        value_x=0.56,
+    )
+
+    right_ax = fig.add_subplot(grid[0, 2])
+    _prepare_box(right_ax)
+    _draw_stacked_sections(
+        right_ax,
+        [
+            (
+                "Overall Capability",
+                _overall_capability_rows(cap_stats, indices, include_cpm=specs.target is not None),
+            ),
+            ("Potential (Within) Capability", _within_capability_rows(cap_stats, indices)),
+        ],
+        top_y=0.80,
+        line_height=0.053,
+        left=0.01,
+        right=0.99,
+        padding=0.04,
+        label_x=0.03,
+        value_x=0.50,
+        divider_gap=0.04,
+    )
+
+    performance_ax = fig.add_subplot(grid[2, :])
+    _prepare_box(performance_ax)
+    _draw_performance_table(performance_ax, performance)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.subplots_adjust(top=0.9, bottom=0.08, left=0.05, right=0.97, hspace=0.1, wspace=0.05)
+    fig.savefig(output_path, bbox_inches="tight")
+    plt.close(fig)
 
 def _format_anova_table(table: pd.DataFrame, total_ss: float, total_df: int) -> GageRrTable:
     rows: list[list[str]] = []
@@ -1432,8 +1837,7 @@ def generate_sixpack(
     if use_downloaded_fonts is not False:
         _ensure_fonts()
     values_array = np.asarray(list(values), dtype=float)
-    if values_array.size < 5:
-        raise ValueError("Need at least 5 observations for sixpack.")
+    _validate_capability_inputs(values_array, specs, min_count=5, context="sixpack")
 
     stats = _capability_stats(values_array, specs)
 
@@ -1462,6 +1866,27 @@ def generate_sixpack(
     plt.close(fig)
 
     return stats
+
+def generate_capability_analysis(
+    values: Iterable[float],
+    specs: CapabilitySpecs,
+    title: str,
+    output_path: Path,
+    *,
+    use_downloaded_fonts: Optional[bool] = None,
+) -> CapabilityAnalysisResult:
+    if use_downloaded_fonts is not False:
+        _ensure_fonts()
+    values_array = np.asarray(list(values), dtype=float)
+    _validate_capability_inputs(values_array, specs, min_count=5, context="capability analysis")
+
+    stats = _capability_stats(values_array, specs)
+    indices = _capability_indices(stats, specs)
+    performance = _performance_ppm(values_array, stats, specs)
+
+    _plot_capability_analysis_report(values_array, stats, indices, performance, specs, title, output_path)
+
+    return CapabilityAnalysisResult(stats=stats, indices=indices, performance=performance)
 
 
 def _synthetic_data(seed: int = 42) -> np.ndarray:
@@ -1513,6 +1938,11 @@ def _parse_args() -> argparse.Namespace:
         help="Download Plus Jakarta Sans fonts and use them for the report.",
     )
     parser.add_argument(
+        "--capability-analysis",
+        action="store_true",
+        help="Generate a capability analysis (Normal) report.",
+    )
+    parser.add_argument(
         "--gage-rr",
         action="store_true",
         help="Generate a Gage R&R (ANOVA) report instead of a sixpack.",
@@ -1558,6 +1988,25 @@ def main() -> None:
         print("\n" + _format_table(result.variance_components))
         print("\n" + _format_table(result.gage_evaluation))
         print(f"\nNumber of Distinct Categories = {result.distinct_categories}")
+    elif args.capability_analysis:
+        values = _synthetic_data()
+        specs = CapabilitySpecs(lsl=103.0, usl=110.0, target=104.0)
+        output = Path("output/capability_analysis_report.png")
+
+        result = generate_capability_analysis(
+            values,
+            specs,
+            "Process Capability Report for data",
+            output,
+        )
+
+        print(f"Capability analysis saved to {output.resolve()}")
+        print(
+            "Capability analysis summary:",
+            f"Mean={result.stats.mean:.3f}",
+            f"Within Sigma={result.stats.within_sigma:.3f}",
+            f"Overall Sigma={result.stats.overall_sigma:.3f}",
+        )
     else:
         values = _synthetic_data()
         specs = CapabilitySpecs(lsl=103.0, usl=110.0, target=104.0)
