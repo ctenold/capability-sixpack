@@ -1,24 +1,42 @@
 # Capability Sixpack Report
 
-Generate a Minitab-style capability sixpack report with Python and Matplotlib.
+Generate Minitab-style capability sixpack and Gage R&R reports with Python and Matplotlib.
+
+## Features
+
+- **Capability Sixpack** – I/MR control charts, histogram, probability plot, last 25 observations, and capability indices (Cp, Cpk, Pp, Ppk, Cpm)
+- **Gage R&R Study (ANOVA)** – Full ANOVA analysis with variance components, % study variation, % tolerance, and distinct categories
+- **MSA Assistant** – Automated interpretation of Gage R&R results with pass/fail assessment against AIAG MSA guidelines
 
 ## Example Output
 
+### Capability Sixpack
 ![Sixpack report preview](output/sixpack_report.png)
+
+### Gage R&R Report
+![Gage R&R report preview](output/gage_rr_report.png)
+
+### MSA Assistant
+![MSA Assistant preview](output/gage_rr_assistant.png)
 
 ## Quick Start
 
+### Capability Sixpack
 ```bash
 python src/sixpack_report.py --download-fonts
 ```
 
-The script writes `output/sixpack_report.png` and prints a short capability summary.
+### Gage R&R Study
+```bash
+python src/sixpack_report.py --gage-rr --download-fonts
+```
 
 ## Usage
 
+### Capability Sixpack
+
 ```python
 from pathlib import Path
-
 from src.sixpack_report import CapabilitySpecs, generate_sixpack
 
 values = [
@@ -32,14 +50,47 @@ stats = generate_sixpack(
     specs,
     "Process Capability Sixpack Report",
     Path("output/sixpack_report.png"),
-    use_downloaded_fonts=True,
 )
 
 print(stats)
 ```
 
+### Gage R&R Study
+
+```python
+from pathlib import Path
+from src.sixpack_report import (
+    GageRrRecord, GageRrSpecs, generate_gage_rr_report
+)
+
+# Your measurement data
+records = [
+    GageRrRecord(part="1", operator="A", measurement=10.02),
+    GageRrRecord(part="1", operator="A", measurement=10.05),
+    # ... more measurements
+]
+
+specs = GageRrSpecs(
+    tolerance=8.0,
+    gage_name="Calipers",
+    reported_by="Quality Engineer",
+)
+
+result = generate_gage_rr_report(
+    records,
+    "Gage R&R (ANOVA) Report",
+    Path("output/gage_rr_report.png"),
+    specs=specs,
+    assistant_output_path=Path("output/gage_rr_assistant.png"),
+)
+
+print(f"Distinct Categories: {result.distinct_categories}")
+print(f"Interaction p-value: {result.interaction_p_value:.3f}")
+```
+
 ## Project Notes
 
-- The report layout mirrors Minitab's sixpack with I/MR charts, histogram, probability plot, last 25 observations, and a capability plot.
-- Use `--download-fonts` to fetch Plus Jakarta Sans into `src/assets/fonts/plus_jakarta_sans`.
-- Without downloaded fonts, the charts use your default Matplotlib fonts.
+- Download fonts once: `python src/sixpack_report.py --download-fonts` fetches Plus Jakarta Sans into `src/assets/fonts/plus_jakarta_sans`
+- Reports automatically use downloaded fonts when present
+- Gage R&R follows AIAG MSA guidelines for ANOVA analysis and variance component calculation
+- MSA Assistant interprets %Study Var and %Tolerance against standard criteria (<10% acceptable, 10-30% marginal, >30% unacceptable)
